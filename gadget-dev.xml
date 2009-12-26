@@ -1,0 +1,293 @@
+<Module>
+  <ModulePrefs title="Mind-mapping">
+    <Require feature="wave" />
+    <Require feature="dynamic-height" />
+  </ModulePrefs>
+  <Content type="html">
+    <![CDATA[
+      <div id="contents">
+        <input type="text" style="display: none; position: absolute" id="nodeInput" />
+        <canvas id="canvas" width="500" height="150"></canvas>
+        <input type="button" value="reset state" id="debugReset" />
+        <input type="button" value="clear console" id="clearConsole" />
+      </div>
+      <div id="console"></div>
+      <div>version: 0.1</div>
+      <script type="text/javascript">
+        DRAW_CONSTS = {
+          LEVEL_HORIZ_SPACING: 50,
+          LEVEL_VERT_SPACING: 5,
+          NODE_HEIGHT: 20,
+          NODE_PADDING: 5,
+          NODE_WIDTH: 50,
+          ORIGIN_DELTA_X: 20,
+          ORIGIN_DELTA_Y: 20,
+          VERTICAL_SPACING: 10
+        };
+        KEY_CODES = {
+          ENTER: 13
+        };
+        
+        // TODO: actually depend on closure instead of copying code here
+        function bind(fn, selfObj, var_args) {
+          if (arguments.length > 2) {
+            var boundArgs = Array.prototype.slice.call(arguments, 2);
+            return function() {
+              // Prepend the bound arguments to the current arguments.
+              var newArgs = Array.prototype.slice.call(arguments);
+              Array.prototype.unshift.apply(newArgs, boundArgs);
+              return fn.apply(selfObj, newArgs);
+            };
+      
+          } else {
+            return function() {
+              return fn.apply(selfObj, arguments);
+            };
+          }
+        };
+
+        function NodeView(x, y, opt_height) {
+          this.x = x;
+          this.y = y;
+          this.height = opt_height ? opt_height : DRAW_CONSTS.NODE_HEIGHT;
+        }
+        
+        function Node(id, text, opt_children) {
+          this.id = id;
+          this.text = text;
+          this.children = opt_children ? opt_children : new Array();
+          this.view = new NodeView();
+        }
+        
+        Node.prototype.serialize = function() {
+          var childrenIds = '';
+          for (var i = 0; i < this.children.length; i++) {
+            childrenIds += this.children[i].id + ',';
+          }
+          return [this.text, childrenIds].join(';');
+        };
+        
+        function Gadget() {
+          this.canvas = document.getElementById('canvas');
+          this.canvasContext = canvas.getContext('2d');
+          this.nodeInput = document.getElementById('nodeInput');
+
+        }
+        Gadget.prototype.stateUpdated = function() {
+          this.debugPrintState();
+          this.render();
+        };
+        Gadget.prototype.serialize = function(node) {
+          if (node.children.length > 0) {
+            for (var i = 0; i < node.children.length; i++) {
+              this.serialize(node.children[i]);
+            }
+          }
+          this.submitNodeUpdateDelta(node);
+        };
+        Gadget.prototype.deserialize = function(nodeId, stringValue) {
+          var parts = stringValue.split(';');
+          var text = parts[0];
+          var childrenIds = parts[1].split(',');
+          var children = new Array();
+          for (var i = 0; i < childrenIds.length; i++) {
+            var childId = childrenIds[i].trim();
+            if (childId == null || childId === '') {
+              continue;
+            }
+            var childValue = wave.getState().get(childId);
+            var child = this.deserialize(childId, childValue);
+            children.push(child);
+          }
+          return new Node(nodeId, text, children);
+        };
+        Gadget.prototype.render = function() {
+          this.clearCanvas();
+          this.canvasContext.fillStyle = 'rgb(0, 0, 0)';
+          
+          // Viewport border
+          this.canvasContext.strokeRect(0, 0, 500, 145);    
+        
+          this.treeRoot = new Node('root', 'default root');
+          var serializedRoot = wave.getState().get('root');
+          if (serializedRoot) {
+            this.treeRoot = this.deserialize('root', serializedRoot);
+          }
+          
+          this.renderTree(this.treeRoot);
+          gadgets.window.adjustHeight();  
+        };
+        Gadget.prototype.renderTree = function(root) {
+          this.buildView(root, 0, 0);
+          this.renderNode(root);
+        };
+        Gadget.prototype.buildView = function(node, levelLeft, levelTop) {
+          if (node.children.length == 0) {
+            node.view = new NodeView(levelLeft, levelTop);
+            return;
+          }
+          var levelWidth = 0;
+          for (var i = 0; i < node.children.length; i++) {
+            levelWidth = Math.max(levelWidth, this.nodeWidth(node.children[i]));
+          }
+          var verticalCursor = levelTop;
+          var horizontalSpacing = DRAW_CONSTS.LEVEL_HORIZ_SPACING + 2 * DRAW_CONSTS.NODE_PADDING;
+          for (var i = 0; i < node.children.length; i++) {
+            this.buildView(node.children[i], levelLeft + levelWidth + horizontalSpacing, verticalCursor);
+            verticalCursor += node.children[i].view.height + DRAW_CONSTS.LEVEL_VERT_SPACING;
+          }
+          var levelHeight = verticalCursor - levelTop;
+          var nodeTop = levelTop + (levelHeight / 2) - (DRAW_CONSTS.NODE_HEIGHT / 2);
+          var margin = (levelWidth - this.nodeWidth(node)) / 2;
+          
+          node.view = new NodeView(levelLeft + margin, nodeTop, levelHeight);
+
+          for (var i = 0; i < node.children.length; i++) {
+            this.renderEdge(node, node.children[i]);
+          }
+        };
+        Gadget.prototype.renderNode = function(node) {
+          this.canvasContext.fillStyle = 'rgb(0, 0, 0)';
+          var width = this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING;
+          var height = DRAW_CONSTS.NODE_HEIGHT;
+          this.canvasContext.textBaseline = 'top';
+          this.canvasContext.fillText(node.text, node.view.x + DRAW_CONSTS.NODE_PADDING, 
+              node.view.y + DRAW_CONSTS.NODE_PADDING);
+          this.canvasContext.strokeRect(node.view.x, node.view.y, width, height);
+          for (var i = 0; i < node.children.length; i++) {
+            this.renderNode(node.children[i]);
+          }
+        };
+        Gadget.prototype.renderEdge = function(n1, n2) {
+          var x1 = n1.view.x + this.nodeWidth(n1) + 2 * DRAW_CONSTS.NODE_PADDING;
+          var y1 = n1.view.y + DRAW_CONSTS.NODE_HEIGHT / 2;
+          var x2 = n2.view.x;
+          var y2 = n2.view.y + DRAW_CONSTS.NODE_HEIGHT / 2;
+  
+          var dcpy = 5;
+          if (y2 < y1) {
+            dcpy *= -1;
+          }
+  
+          this.canvasContext.beginPath();
+          this.canvasContext.moveTo(x1, y1);
+          this.canvasContext.bezierCurveTo(x1 + 10, y1, x2 - 10, y2 + dcpy, x2, y2);
+          this.canvasContext.stroke();
+        };
+        Gadget.prototype.nodeWidth = function(node) {
+          return this.canvasContext.measureText(node.text).width;
+        };
+        Gadget.prototype.findNode = function(node, x, y) {
+          if (node.view.x <= x
+              && (node.view.x + this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING >= x)) {
+            if (node.view.y <= y && (node.view.y + DRAW_CONSTS.NODE_HEIGHT) >= y) {
+              return node;
+            }
+          }
+        
+          // TODO: trim the search by looking at level widths and subtree heights
+          for (var i = 0; i < node.children.length; i++) {
+            var child = this.findNode(node.children[i], x, y);
+            if (!!child) {
+              return child;
+            }
+          }
+          return undefined;
+        };
+        Gadget.prototype.canvasMouseClicked = function(event) {
+          // firefox: log('layerX: ' + event.layerX + 'layerY: ' + event.layerY);
+          // opera: log('offsetX: ' + event.offsetX + 'offsetY: ' + event.offsetY);
+          // ?: log('offsetLeft: ' + event.offsetLeft + 'offsetTop: ' + event.offsetTop);
+          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
+          if (!node) {
+            this.cancelEdition();
+            return;
+          }
+          this.editNode(node);
+        };
+        Gadget.prototype.registerListeners = function() {
+          this.canvas.addEventListener('click', bind(this.canvasMouseClicked, this), false);
+          this.nodeInput.addEventListener('keyup', bind(this.nodeInputKeyUp, this), false);
+        };
+        Gadget.prototype.cancelEdition = function() {
+          this.nodeInput.style.display = 'none';
+          this.nodeInput.value = '';
+        };
+        Gadget.prototype.editNode = function(node) {
+          var contentsDiv = document.getElementById('contents');
+  
+          // Styling and positioning
+          this.nodeInput.type = 'text';
+          this.nodeInput.style.left = node.view.x + 'px';
+          this.nodeInput  .style.top = node.view.y + 'px';
+          this.nodeInput.style.display = 'block';
+          this.nodeInput.size = node.text.length;
+          this.nodeInput.value = node.text;
+        
+          this.currentEditNode = node;
+        
+          this.nodeInput.focus();
+        };
+        Gadget.prototype.nodeInputKeyUp = function(event) {
+          if (event.keyCode == KEY_CODES.ENTER) {
+            if (!this.currentEditNode) {
+              return;
+            }
+            this.nodeInput.style.display = 'none';
+            this.currentEditNode.text = this.nodeInput.value;
+            this.submitNodeUpdateDelta(this.currentEditNode);
+          }
+        };
+        Gadget.prototype.submitNodeUpdateDelta = function(node) {
+          log(['submitting node update delta {', node.id, ': "', node.text, '"}'].join(' '));
+          var nodeUpdate = {};
+          nodeUpdate[node.id] = node.serialize();
+          wave.getState().submitDelta(nodeUpdate);          
+        };
+        Gadget.prototype.clearCanvas = function() {
+          this.canvasContext.fillStyle = 'rgb(255,255,255)';
+          this.canvasContext.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        };
+        Gadget.prototype.generateNodeId = function() {
+          var timestamp = new Date().getTime();
+          var participantId = wave.getViewer().getId();
+          return participantId + '_' + timestamp;
+        };
+        Gadget.prototype.debugResetState = function() {
+          wave.getState().reset();
+          var debugRoot = new Node('root', 'debug root', new Array(new Node(this.generateNodeId(), 'first child')));
+          this.serialize(debugRoot);
+        };
+        Gadget.prototype.debugPrintState = function() {
+          var keys = wave.getState().getKeys();  
+          for (var i = 0; i < keys.length; i++) {
+            log(keys[i] + ': ' + wave.getState().get(keys[i]));
+          }
+        };
+        
+        function log(message) {
+          var console = document.getElementById('console');
+          var logEntry = document.createElement('div');
+          logEntry.innerHTML = message;
+          console.appendChild(logEntry);
+        }
+        
+        function init() {
+          if (!wave || !wave.isInWaveContainer()) {
+            return;
+          }
+          var gadget = new Gadget();
+          gadget.registerListeners();
+          wave.setStateCallback(gadget.stateUpdated, gadget);
+        
+          document.getElementById('debugReset').addEventListener(
+              'click', bind(gadget.debugResetState, gadget), false);
+          document.getElementById('clearConsole').addEventListener(
+              'click', function() {document.getElementById('console').innerHTML = '';}, false);
+        }
+        
+        gadgets.util.registerOnLoadHandler(init);
+      </script>
+    ]]>
+  </Content>
+</Module>
