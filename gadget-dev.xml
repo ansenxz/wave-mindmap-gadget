@@ -8,16 +8,18 @@
       <div id="contents">
         <input type="text" style="display: none; position: absolute" id="nodeInput" />
         <canvas id="canvas" width="500" height="150"></canvas>
-        <input type="button" value="reset state" id="debugReset" />
-        <input type="button" value="clear console" id="clearConsole" />
       </div>
+      <input type="button" value="reset state" id="debugReset" />
+      <input type="button" value="clear console" id="clearConsole" />
       <div id="console"></div>
       <div>version: 0.1</div>
       <script type="text/javascript">
         DRAW_CONSTS = {
           LEVEL_HORIZ_SPACING: 50,
           LEVEL_VERT_SPACING: 5,
+          NODE_CONTROL_RADIUS: 4,
           NODE_HEIGHT: 20,
+          NODE_HIGHLIGHT_OFFSET: 2,
           NODE_PADDING: 5,
           NODE_WIDTH: 50,
           ORIGIN_DELTA_X: 20,
@@ -26,6 +28,19 @@
         };
         KEY_CODES = {
           ENTER: 13
+        };
+        COMMANDS = {
+          'add_child': function(gadget, node) {
+            return function() { gadget.addChild(node); };
+          }
+        };
+        CONTROL_BUILDERS = {
+          'add_child': function(gadget, node) {
+
+            return new NodeControl(node.view.x + node.view.width,
+                                   node.view.y + node.view.height / 2,
+                                   COMMANDS['add_child'](gadget, node));
+          }
         };
         
         // TODO: actually depend on closure instead of copying code here
@@ -46,10 +61,25 @@
           }
         };
 
-        function NodeView(x, y, opt_height) {
+        function NodeControl(x, y, command) {
           this.x = x;
           this.y = y;
-          this.height = opt_height ? opt_height : DRAW_CONSTS.NODE_HEIGHT;
+          this.command = command;
+          this.radius = DRAW_CONSTS.NODE_CONTROL_RADIUS;
+        }
+        NodeControl.prototype.isInside = function(x, y) {
+          return ((this.x - this.radius) <= x && (this.x + this.radius) >= x)
+              && ((this.y - this.radius) <= y && (this.y + this.radius) >= y);
+        };
+
+        function NodeView(x, y, width, height, levelHeight) {
+          this.x = x;
+          this.y = y;
+          this.width = width;
+          this.height = height;
+
+          // TODO: remove this hack, make buildView deal with this
+          this.levelHeight = levelHeight;
         }
         
         function Node(id, text, opt_children) {
@@ -71,11 +101,22 @@
           this.canvas = document.getElementById('canvas');
           this.canvasContext = canvas.getContext('2d');
           this.nodeInput = document.getElementById('nodeInput');
-
+          this.selectedNodeId = undefined;
         }
         Gadget.prototype.stateUpdated = function() {
           this.debugPrintState();
+          this.resetTransientState();
+
+          var serializedRoot = wave.getState().get('root');
+          if (serializedRoot) {
+            this.treeRoot = this.deserialize('root', serializedRoot);
+          }
+          
           this.render();
+        };
+        Gadget.prototype.resetTransientState = function() {
+          this.treeRoot = new Node('root', 'default root');
+          this.controls = new Array();
         };
         Gadget.prototype.serialize = function(node) {
           if (node.children.length > 0) {
@@ -102,28 +143,70 @@
           return new Node(nodeId, text, children);
         };
         Gadget.prototype.render = function() {
-          this.clearCanvas();
-          this.canvasContext.fillStyle = 'rgb(0, 0, 0)';
-          
-          // Viewport border
-          this.canvasContext.strokeRect(0, 0, 500, 145);    
-        
-          this.treeRoot = new Node('root', 'default root');
-          var serializedRoot = wave.getState().get('root');
-          if (serializedRoot) {
-            this.treeRoot = this.deserialize('root', serializedRoot);
-          }
-          
-          this.renderTree(this.treeRoot);
+          this.renderTree();
+          this.renderControls();
           gadgets.window.adjustHeight();  
         };
-        Gadget.prototype.renderTree = function(root) {
-          this.buildView(root, 0, 0);
-          this.renderNode(root);
+        Gadget.prototype.renderTree = function() {
+          this.buildView(this.treeRoot, 0, 0);
+
+          // Adjust canvas to fit current view.
+          this.adjustCanvas();
+
+          // Render the graph.
+          this.renderNode(this.treeRoot);
+        };
+        Gadget.prototype.adjustCanvas = function() {
+          this.clearCanvas();
+          this.canvasContext.fillStyle = this.canvasContext.strokeStyle = 'rgb(0, 0, 0)';
+
+          var canvasHeight = this.treeRoot.view.levelHeight;
+          this.canvas.height = canvasHeight;
+
+          // Viewport border
+          this.canvasContext.strokeRect(0, 0, 500, canvasHeight);
+        };
+        Gadget.prototype.renderControls = function() {
+          if (!this.selectedNodeId) {
+            return;
+          }
+
+          var selectedNode = this.findSelectedNode(this.treeRoot);
+          if (!selectedNode) {
+            // TODO: someone deleted a node this viewer had selected, need to handle that
+            this.selectedNodeId = undefined;
+            return;
+          }
+
+          // Adjust control positioning according to current state.
+          this.buildControls(selectedNode);
+
+          // Highlight selected node.
+          this.canvasContext.save();
+          this.canvasContext.strokeStyle = 'rgb(255, 140, 0)';
+          this.canvasContext.strokeRect(
+              selectedNode.view.x - DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET,
+              selectedNode.view.y - DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET,
+              selectedNode.view.width + 2 * DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET,
+              selectedNode.view.height + 2 * DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET);
+          this.canvasContext.restore();
+          
+          // Actually render controls.
+          this.canvasContext.save();
+          for (var i = 0; i < this.controls.length; i++) {
+            var control = this.controls[i];
+            this.canvasContext.fillStyle = 'rgb(255, 0, 0)';
+            this.canvasContext.beginPath();
+            this.canvasContext.arc(control.x, control.y, control.radius, 0, 360, false);
+            this.canvasContext.fill();
+          }
+          this.canvasContext.restore();
         };
         Gadget.prototype.buildView = function(node, levelLeft, levelTop) {
+          var width = this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING;
           if (node.children.length == 0) {
-            node.view = new NodeView(levelLeft, levelTop);
+            node.view = new NodeView(levelLeft, levelTop, width, DRAW_CONSTS.NODE_HEIGHT,
+                DRAW_CONSTS.NODE_HEIGHT);
             return;
           }
           var levelWidth = 0;
@@ -133,14 +216,16 @@
           var verticalCursor = levelTop;
           var horizontalSpacing = DRAW_CONSTS.LEVEL_HORIZ_SPACING + 2 * DRAW_CONSTS.NODE_PADDING;
           for (var i = 0; i < node.children.length; i++) {
-            this.buildView(node.children[i], levelLeft + levelWidth + horizontalSpacing, verticalCursor);
-            verticalCursor += node.children[i].view.height + DRAW_CONSTS.LEVEL_VERT_SPACING;
+            this.buildView(node.children[i], levelLeft + levelWidth + horizontalSpacing,
+                verticalCursor);
+            verticalCursor += node.children[i].view.levelHeight + DRAW_CONSTS.LEVEL_VERT_SPACING;
           }
           var levelHeight = verticalCursor - levelTop;
           var nodeTop = levelTop + (levelHeight / 2) - (DRAW_CONSTS.NODE_HEIGHT / 2);
-          var margin = (levelWidth - this.nodeWidth(node)) / 2;
+          var margin = (levelWidth - width) / 2;
           
-          node.view = new NodeView(levelLeft + margin, nodeTop, levelHeight);
+          node.view = new NodeView(levelLeft + margin, nodeTop, width, DRAW_CONSTS.NODE_HEIGHT,
+              levelHeight); 
 
           for (var i = 0; i < node.children.length; i++) {
             this.renderEdge(node, node.children[i]);
@@ -148,27 +233,28 @@
         };
         Gadget.prototype.renderNode = function(node) {
           this.canvasContext.fillStyle = 'rgb(0, 0, 0)';
-          var width = this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING;
-          var height = DRAW_CONSTS.NODE_HEIGHT;
           this.canvasContext.textBaseline = 'top';
           this.canvasContext.fillText(node.text, node.view.x + DRAW_CONSTS.NODE_PADDING, 
               node.view.y + DRAW_CONSTS.NODE_PADDING);
-          this.canvasContext.strokeRect(node.view.x, node.view.y, width, height);
+          this.canvasContext.strokeRect(node.view.x, node.view.y, node.view.width,
+              node.view.height);
+
           for (var i = 0; i < node.children.length; i++) {
             this.renderNode(node.children[i]);
           }
         };
         Gadget.prototype.renderEdge = function(n1, n2) {
-          var x1 = n1.view.x + this.nodeWidth(n1) + 2 * DRAW_CONSTS.NODE_PADDING;
-          var y1 = n1.view.y + DRAW_CONSTS.NODE_HEIGHT / 2;
+          var x1 = n1.view.x + n1.view.width;
+          var y1 = n1.view.y + n1.view.height / 2;
           var x2 = n2.view.x;
-          var y2 = n2.view.y + DRAW_CONSTS.NODE_HEIGHT / 2;
+          var y2 = n2.view.y + n2.view.height / 2;
   
           var dcpy = 5;
           if (y2 < y1) {
             dcpy *= -1;
           }
   
+          this.canvasContext.strokeStyle = 'rgb(0, 0, 0)';
           this.canvasContext.beginPath();
           this.canvasContext.moveTo(x1, y1);
           this.canvasContext.bezierCurveTo(x1 + 10, y1, x2 - 10, y2 + dcpy, x2, y2);
@@ -176,6 +262,19 @@
         };
         Gadget.prototype.nodeWidth = function(node) {
           return this.canvasContext.measureText(node.text).width;
+        };
+        Gadget.prototype.findSelectedNode = function(node) {
+          if (this.selectedNodeId == node.id) {
+            return node;
+          }
+
+          for (var i = 0; i < node.children.length; i++) {
+            var child = this.findSelectedNode(node.children[i]);
+            if (!!child) {
+              return child;
+            }
+          }
+          return undefined;
         };
         Gadget.prototype.findNode = function(node, x, y) {
           if (node.view.x <= x
@@ -194,7 +293,26 @@
           }
           return undefined;
         };
-        Gadget.prototype.canvasMouseClicked = function(event) {
+        Gadget.prototype.canvasClicked = function(event) {
+          // First check if a control was clicked, and if so apply it.
+          for (var i = 0; i < this.controls.length; i++) {
+            var control= this.controls[i];
+            if (control.isInside(event.layerX, event.layerY)) {
+              control.command();
+              return;
+            }
+          }
+
+          // Check if a node was clicked to select it.
+          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
+          if (!node) {
+            this.cancelEdition();
+            return;
+          }
+          this.selectNode(node);
+          this.render();
+        };
+        Gadget.prototype.canvasDoubleClicked = function(event) {
           // firefox: log('layerX: ' + event.layerX + 'layerY: ' + event.layerY);
           // opera: log('offsetX: ' + event.offsetX + 'offsetY: ' + event.offsetY);
           // ?: log('offsetLeft: ' + event.offsetLeft + 'offsetTop: ' + event.offsetTop);
@@ -206,8 +324,21 @@
           this.editNode(node);
         };
         Gadget.prototype.registerListeners = function() {
-          this.canvas.addEventListener('click', bind(this.canvasMouseClicked, this), false);
+          this.canvas.addEventListener('click', bind(this.canvasClicked, this), false);
+          this.canvas.addEventListener('dblclick', bind(this.canvasDoubleClicked, this), false);
           this.nodeInput.addEventListener('keyup', bind(this.nodeInputKeyUp, this), false);
+        };
+        Gadget.prototype.addChild = function(parent) {
+          var newNode = new Node(this.generateNodeId(), 'new');
+          parent.children.push(newNode);
+          this.serialize(parent);
+        };
+        Gadget.prototype.selectNode = function(node) {
+          this.selectedNodeId = node.id;
+          this.buildControls(node);
+        };
+        Gadget.prototype.buildControls = function(node) {
+          this.controls = new Array(CONTROL_BUILDERS['add_child'](this, node));
         };
         Gadget.prototype.cancelEdition = function() {
           this.nodeInput.style.display = 'none';
@@ -255,8 +386,10 @@
         };
         Gadget.prototype.debugResetState = function() {
           wave.getState().reset();
-          var debugRoot = new Node('root', 'debug root', new Array(new Node(this.generateNodeId(), 'first child')));
+          var debugRoot = new Node('root', 'debug root', new Array(
+              new Node(this.generateNodeId(), 'first child')));
           this.serialize(debugRoot);
+          this.controls = new Array();
         };
         Gadget.prototype.debugPrintState = function() {
           var keys = wave.getState().getKeys();  
