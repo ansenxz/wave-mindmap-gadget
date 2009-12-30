@@ -14,6 +14,9 @@
       <div id="console"></div>
       <div>version: 0.1</div>
       <script type="text/javascript">
+        // ---------------------------------------------------------------------
+        // Global definitions and helpers
+        // ---------------------------------------------------------------------
         DRAW_CONSTS = {
           LEVEL_HORIZ_SPACING: 50,
           LEVEL_VERT_SPACING: 5,
@@ -61,6 +64,10 @@
           }
         };
 
+        // ---------------------------------------------------------------------
+        // View helper objects.
+        // ---------------------------------------------------------------------
+
         function NodeControl(x, y, command) {
           this.x = x;
           this.y = y;
@@ -88,7 +95,6 @@
           this.children = opt_children ? opt_children : new Array();
           this.view = undefined;
         }
-        
         Node.prototype.serialize = function() {
           var childrenIds = '';
           for (var i = 0; i < this.children.length; i++) {
@@ -97,12 +103,18 @@
           return [this.text, childrenIds].join(';');
         };
         
+        // ---------------------------------------------------------------------
+        // The gadget.
+        // ---------------------------------------------------------------------
         function Gadget() {
           this.canvas = document.getElementById('canvas');
           this.canvasContext = canvas.getContext('2d');
           this.nodeInput = document.getElementById('nodeInput');
           this.selectedNodeId = undefined;
         }
+
+        // App lifecycle.
+
         Gadget.prototype.stateUpdated = function() {
           this.debugPrintState();
           this.resetTransientState();
@@ -117,6 +129,48 @@
         Gadget.prototype.resetTransientState = function() {
           this.treeRoot = new Node('root', 'default root');
           this.controls = new Array();
+        };
+        Gadget.prototype.findSelectedNode = function(node) {
+          if (this.selectedNodeId == node.id) {
+            return node;
+          }
+
+          for (var i = 0; i < node.children.length; i++) {
+            var child = this.findSelectedNode(node.children[i]);
+            if (!!child) {
+              return child;
+            }
+          }
+          return undefined;
+        };
+        Gadget.prototype.findNode = function(node, x, y) {
+          if (node.view.x <= x
+              && (node.view.x + this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING >= x)) {
+            if (node.view.y <= y && (node.view.y + DRAW_CONSTS.NODE_HEIGHT) >= y) {
+              return node;
+            }
+          }
+        
+          // TODO: trim the search by looking at level widths and subtree heights
+          for (var i = 0; i < node.children.length; i++) {
+            var child = this.findNode(node.children[i], x, y);
+            if (!!child) {
+              return child;
+            }
+          }
+          return undefined;
+        };
+        Gadget.prototype.buildControls = function(node) {
+          this.controls = new Array(CONTROL_BUILDERS['add_child'](this, node));
+        };
+
+        // Storage
+
+        Gadget.prototype.submitNodeUpdateDelta = function(node) {
+          log(['submitting node update delta {', node.id, ': "', node.text, '"}'].join(' '));
+          var nodeUpdate = {};
+          nodeUpdate[node.id] = node.serialize();
+          wave.getState().submitDelta(nodeUpdate);          
         };
         Gadget.prototype.serialize = function(node) {
           if (node.children.length > 0) {
@@ -142,6 +196,90 @@
           }
           return new Node(nodeId, text, children);
         };
+        Gadget.prototype.generateNodeId = function() {
+          var timestamp = new Date().getTime();
+          var participantId = wave.getViewer().getId();
+          return participantId + '_' + timestamp;
+        };
+
+        // User actions
+
+        Gadget.prototype.registerListeners = function() {
+          this.canvas.addEventListener('click', bind(this.canvasClicked, this), false);
+          this.canvas.addEventListener('dblclick', bind(this.canvasDoubleClicked, this), false);
+          this.nodeInput.addEventListener('keyup', bind(this.nodeInputKeyUp, this), false);
+        };
+        Gadget.prototype.canvasClicked = function(event) {
+          // First check if a control was clicked, and if so apply it.
+          for (var i = 0; i < this.controls.length; i++) {
+            var control= this.controls[i];
+            if (control.isInside(event.layerX, event.layerY)) {
+              control.command();
+              return;
+            }
+          }
+
+          // Check if a node was clicked to select it.
+          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
+          if (!node) {
+            this.cancelEdition();
+            return;
+          }
+          this.selectNode(node);
+          this.render();
+        };
+        Gadget.prototype.canvasDoubleClicked = function(event) {
+          // firefox: log('layerX: ' + event.layerX + 'layerY: ' + event.layerY);
+          // opera: log('offsetX: ' + event.offsetX + 'offsetY: ' + event.offsetY);
+          // ?: log('offsetLeft: ' + event.offsetLeft + 'offsetTop: ' + event.offsetTop);
+          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
+          if (!node) {
+            this.cancelEdition();
+            return;
+          }
+          this.editNode(node);
+        };
+        Gadget.prototype.addChild = function(parent) {
+          var newNode = new Node(this.generateNodeId(), 'new');
+          parent.children.push(newNode);
+          this.serialize(parent);
+        };
+        Gadget.prototype.selectNode = function(node) {
+          this.selectedNodeId = node.id;
+          this.buildControls(node);
+        };
+        Gadget.prototype.cancelEdition = function() {
+          this.nodeInput.style.display = 'none';
+          this.nodeInput.value = '';
+        };
+        Gadget.prototype.editNode = function(node) {
+          var contentsDiv = document.getElementById('contents');
+  
+          // Styling and positioning
+          this.nodeInput.type = 'text';
+          this.nodeInput.style.left = node.view.x + 'px';
+          this.nodeInput  .style.top = node.view.y + 'px';
+          this.nodeInput.style.display = 'block';
+          this.nodeInput.size = node.text.length;
+          this.nodeInput.value = node.text;
+        
+          this.currentEditNode = node;
+        
+          this.nodeInput.focus();
+        };
+        Gadget.prototype.nodeInputKeyUp = function(event) {
+          if (event.keyCode == KEY_CODES.ENTER) {
+            if (!this.currentEditNode) {
+              return;
+            }
+            this.nodeInput.style.display = 'none';
+            this.currentEditNode.text = this.nodeInput.value;
+            this.submitNodeUpdateDelta(this.currentEditNode);
+          }
+        };
+
+        // Rendering
+
         Gadget.prototype.render = function() {
           this.renderTree();
           this.renderControls();
@@ -155,16 +293,6 @@
 
           // Render the graph.
           this.renderNode(this.treeRoot);
-        };
-        Gadget.prototype.adjustCanvas = function() {
-          this.clearCanvas();
-          this.canvasContext.fillStyle = this.canvasContext.strokeStyle = 'rgb(0, 0, 0)';
-
-          var canvasHeight = this.treeRoot.view.levelHeight;
-          this.canvas.height = canvasHeight;
-
-          // Viewport border
-          this.canvasContext.strokeRect(0, 0, 500, canvasHeight);
         };
         Gadget.prototype.renderControls = function() {
           if (!this.selectedNodeId) {
@@ -202,6 +330,16 @@
             this.canvasContext.closePath();
           }
           this.canvasContext.restore();
+        };
+        Gadget.prototype.adjustCanvas = function() {
+          this.clearCanvas();
+          this.canvasContext.fillStyle = this.canvasContext.strokeStyle = 'rgb(0, 0, 0)';
+
+          var canvasHeight = this.treeRoot.view.levelHeight;
+          this.canvas.height = canvasHeight;
+
+          // Viewport border
+          this.canvasContext.strokeRect(0, 0, 500, canvasHeight);
         };
         Gadget.prototype.buildView = function(node, levelLeft, levelTop) {
           var width = this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING;
@@ -262,130 +400,16 @@
           this.canvasContext.stroke();
           this.canvasContext.closePath();
         };
-        Gadget.prototype.nodeWidth = function(node) {
-          return this.canvasContext.measureText(node.text).width;
-        };
-        Gadget.prototype.findSelectedNode = function(node) {
-          if (this.selectedNodeId == node.id) {
-            return node;
-          }
-
-          for (var i = 0; i < node.children.length; i++) {
-            var child = this.findSelectedNode(node.children[i]);
-            if (!!child) {
-              return child;
-            }
-          }
-          return undefined;
-        };
-        Gadget.prototype.findNode = function(node, x, y) {
-          if (node.view.x <= x
-              && (node.view.x + this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING >= x)) {
-            if (node.view.y <= y && (node.view.y + DRAW_CONSTS.NODE_HEIGHT) >= y) {
-              return node;
-            }
-          }
-        
-          // TODO: trim the search by looking at level widths and subtree heights
-          for (var i = 0; i < node.children.length; i++) {
-            var child = this.findNode(node.children[i], x, y);
-            if (!!child) {
-              return child;
-            }
-          }
-          return undefined;
-        };
-        Gadget.prototype.canvasClicked = function(event) {
-          // First check if a control was clicked, and if so apply it.
-          for (var i = 0; i < this.controls.length; i++) {
-            var control= this.controls[i];
-            if (control.isInside(event.layerX, event.layerY)) {
-              control.command();
-              return;
-            }
-          }
-
-          // Check if a node was clicked to select it.
-          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
-          if (!node) {
-            this.cancelEdition();
-            return;
-          }
-          this.selectNode(node);
-          this.render();
-        };
-        Gadget.prototype.canvasDoubleClicked = function(event) {
-          // firefox: log('layerX: ' + event.layerX + 'layerY: ' + event.layerY);
-          // opera: log('offsetX: ' + event.offsetX + 'offsetY: ' + event.offsetY);
-          // ?: log('offsetLeft: ' + event.offsetLeft + 'offsetTop: ' + event.offsetTop);
-          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
-          if (!node) {
-            this.cancelEdition();
-            return;
-          }
-          this.editNode(node);
-        };
-        Gadget.prototype.registerListeners = function() {
-          this.canvas.addEventListener('click', bind(this.canvasClicked, this), false);
-          this.canvas.addEventListener('dblclick', bind(this.canvasDoubleClicked, this), false);
-          this.nodeInput.addEventListener('keyup', bind(this.nodeInputKeyUp, this), false);
-        };
-        Gadget.prototype.addChild = function(parent) {
-          var newNode = new Node(this.generateNodeId(), 'new');
-          parent.children.push(newNode);
-          this.serialize(parent);
-        };
-        Gadget.prototype.selectNode = function(node) {
-          this.selectedNodeId = node.id;
-          this.buildControls(node);
-        };
-        Gadget.prototype.buildControls = function(node) {
-          this.controls = new Array(CONTROL_BUILDERS['add_child'](this, node));
-        };
-        Gadget.prototype.cancelEdition = function() {
-          this.nodeInput.style.display = 'none';
-          this.nodeInput.value = '';
-        };
-        Gadget.prototype.editNode = function(node) {
-          var contentsDiv = document.getElementById('contents');
-  
-          // Styling and positioning
-          this.nodeInput.type = 'text';
-          this.nodeInput.style.left = node.view.x + 'px';
-          this.nodeInput  .style.top = node.view.y + 'px';
-          this.nodeInput.style.display = 'block';
-          this.nodeInput.size = node.text.length;
-          this.nodeInput.value = node.text;
-        
-          this.currentEditNode = node;
-        
-          this.nodeInput.focus();
-        };
-        Gadget.prototype.nodeInputKeyUp = function(event) {
-          if (event.keyCode == KEY_CODES.ENTER) {
-            if (!this.currentEditNode) {
-              return;
-            }
-            this.nodeInput.style.display = 'none';
-            this.currentEditNode.text = this.nodeInput.value;
-            this.submitNodeUpdateDelta(this.currentEditNode);
-          }
-        };
-        Gadget.prototype.submitNodeUpdateDelta = function(node) {
-          log(['submitting node update delta {', node.id, ': "', node.text, '"}'].join(' '));
-          var nodeUpdate = {};
-          nodeUpdate[node.id] = node.serialize();
-          wave.getState().submitDelta(nodeUpdate);          
-        };
         Gadget.prototype.clearCanvas = function() {
           this.canvasContext.fillStyle = 'rgb(255,255,255)';
           this.canvasContext.fillRect(0, 0, this.canvas.width, this.canvas.height);
         };
-        Gadget.prototype.generateNodeId = function() {
-          var timestamp = new Date().getTime();
-          var participantId = wave.getViewer().getId();
-          return participantId + '_' + timestamp;
+        Gadget.prototype.nodeWidth = function(node) {
+          return this.canvasContext.measureText(node.text).width;
         };
+
+        // Debug helpers
+
         Gadget.prototype.debugResetState = function() {
           wave.getState().reset();
           var debugRoot = new Node('root', 'debug root', new Array(
@@ -400,13 +424,9 @@
           }
         };
         
-        function log(message) {
-          var console = document.getElementById('console');
-          var logEntry = document.createElement('div');
-          logEntry.innerHTML = message;
-          console.appendChild(logEntry);
-        }
-        
+        // ---------------------------------------------------------------------
+        // Gadget initialization
+        // ---------------------------------------------------------------------
         function init() {
           if (!wave || !wave.isInWaveContainer()) {
             return;
@@ -419,6 +439,14 @@
               'click', bind(gadget.debugResetState, gadget), false);
           document.getElementById('clearConsole').addEventListener(
               'click', function() {document.getElementById('console').innerHTML = '';}, false);
+        }
+        
+        // TODO: use minimessage
+        function log(message) {
+          var console = document.getElementById('console');
+          var logEntry = document.createElement('div');
+          logEntry.innerHTML = message;
+          console.appendChild(logEntry);
         }
         
         gadgets.util.registerOnLoadHandler(init);
