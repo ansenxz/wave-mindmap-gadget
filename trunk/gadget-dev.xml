@@ -20,7 +20,7 @@
         DRAW_CONSTS = {
           LEVEL_HORIZ_SPACING: 50,
           LEVEL_VERT_SPACING: 5,
-          NODE_CONTROL_RADIUS: 4,
+          NODE_CONTROL_RADIUS: 5,
           NODE_HEIGHT: 20,
           NODE_HIGHLIGHT_OFFSET: 2,
           NODE_PADDING: 5,
@@ -35,14 +35,22 @@
         COMMANDS = {
           'add_child': function(gadget, node) {
             return function() { gadget.addChild(node); };
+          },
+          'remove_node': function(gadget, node) {
+            return function() { gadget.removeNode(node); };
           }
         };
         CONTROL_BUILDERS = {
           'add_child': function(gadget, node) {
-
             return new NodeControl(node.view.x + node.view.width,
                                    node.view.y + node.view.height / 2,
-                                   COMMANDS['add_child'](gadget, node));
+                                   COMMANDS['add_child'](gadget, node),
+                                   'add_child');
+          },
+          'remove_node': function(gadget, node) {
+            return new NodeControl(node.view.x, node.view.y,
+                                   COMMANDS['remove_node'](gadget, node),
+                                   'remove_node');
           }
         };
         
@@ -68,16 +76,21 @@
         // View helper objects.
         // ---------------------------------------------------------------------
 
-        function NodeControl(x, y, command) {
+        // Node controls
+
+        function NodeControl(x, y, command, name) {
           this.x = x;
           this.y = y;
           this.command = command;
+          this.name = name;
           this.radius = DRAW_CONSTS.NODE_CONTROL_RADIUS;
         }
         NodeControl.prototype.isInside = function(x, y) {
           return ((this.x - this.radius) <= x && (this.x + this.radius) >= x)
               && ((this.y - this.radius) <= y && (this.y + this.radius) >= y);
         };
+
+        // Node data and view.
 
         function NodeView(x, y, width, height, levelHeight) {
           this.x = x;
@@ -161,7 +174,11 @@
           return undefined;
         };
         Gadget.prototype.buildControls = function(node) {
-          this.controls = new Array(CONTROL_BUILDERS['add_child'](this, node));
+          this.controls =
+              new Array(
+                  CONTROL_BUILDERS['add_child'](this, node),
+                  CONTROL_BUILDERS['remove_node'](this, node)
+              );
         };
 
         // Storage
@@ -244,6 +261,15 @@
           parent.children.push(newNode);
           this.serialize(parent);
         };
+        Gadget.prototype.removeNode = function(node) {
+          if (node === this.treeRoot) {
+            log('attempted to remove root, duh');
+            return;
+          }
+
+          this.selectedNodeId = undefined;
+          log('TODO: actually remove node ' + node.id);
+        };
         Gadget.prototype.selectNode = function(node) {
           this.selectedNodeId = node.id;
           this.buildControls(node);
@@ -320,15 +346,53 @@
           this.canvasContext.restore();
           
           // Actually render controls.
-          this.canvasContext.save();
-          this.canvasContext.fillStyle = 'rgb(255, 0, 0)';
           for (var i = 0; i < this.controls.length; i++) {
             var control = this.controls[i];
-            this.canvasContext.beginPath();
-            this.canvasContext.arc(control.x, control.y, control.radius, 0, 360, false);
-            this.canvasContext.fill();
-            this.canvasContext.closePath();
+            if (control.name == 'add_child') {
+              this.renderAddChildControl(control);
+            } else if (control.name == 'remove_node') {
+              this.renderRemoveNodeControl(control);
+            }
           }
+        };
+        Gadget.prototype.renderAddChildControl = function(control) {
+          this.canvasContext.save();
+
+          this.canvasContext.fillStyle = 'rgb(0, 100, 0)';
+          this.canvasContext.beginPath();
+          this.canvasContext.arc(control.x, control.y, control.radius, 0, 360, false);
+          this.canvasContext.fill();
+          this.canvasContext.closePath();
+  
+          this.canvasContext.strokeStyle = 'rgb(255, 255, 255)';
+          this.canvasContext.beginPath();
+          this.canvasContext.moveTo(control.x - 2, control.y);
+          this.canvasContext.lineTo(control.x + 2, control.y);
+          this.canvasContext.moveTo(control.x, control.y - 2);
+          this.canvasContext.lineTo(control.x, control.y + 2);
+          this.canvasContext.stroke();
+          this.canvasContext.closePath();
+
+          this.canvasContext.restore();
+        };
+        Gadget.prototype.renderRemoveNodeControl = function(control) {
+          this.canvasContext.save();
+          
+          this.canvasContext.fillStyle = 'rgb(255, 0, 0)';
+          this.canvasContext.beginPath();
+          this.canvasContext.arc(control.x, control.y, control.radius, 0, 360, false);
+          this.canvasContext.fill();
+          this.canvasContext.closePath();
+  
+          this.canvasContext.strokeStyle = 'rgb(255, 255, 255)';
+          this.canvasContext.beginPath();
+          this.canvasContext.moveTo(control.x - 2, control.y - 2);
+          this.canvasContext.lineTo(control.x + 2, control.y + 2);
+          this.canvasContext.moveTo(control.x - 2, control.y + 2);
+          this.canvasContext.lineTo(control.x + 2, control.y - 2);
+          this.canvasContext.stroke();
+          this.canvasContext.closePath();
+
           this.canvasContext.restore();
         };
         Gadget.prototype.adjustCanvas = function() {
