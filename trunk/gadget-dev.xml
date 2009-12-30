@@ -86,7 +86,7 @@
           this.id = id;
           this.text = text;
           this.children = opt_children ? opt_children : new Array();
-          this.view = new NodeView();
+          this.view = undefined;
         }
         
         Node.prototype.serialize = function() {
@@ -193,12 +193,13 @@
           
           // Actually render controls.
           this.canvasContext.save();
+          this.canvasContext.fillStyle = 'rgb(255, 0, 0)';
           for (var i = 0; i < this.controls.length; i++) {
             var control = this.controls[i];
-            this.canvasContext.fillStyle = 'rgb(255, 0, 0)';
             this.canvasContext.beginPath();
             this.canvasContext.arc(control.x, control.y, control.radius, 0, 360, false);
             this.canvasContext.fill();
+            this.canvasContext.closePath();
           }
           this.canvasContext.restore();
         };
@@ -226,10 +227,6 @@
           
           node.view = new NodeView(levelLeft + margin, nodeTop, width, DRAW_CONSTS.NODE_HEIGHT,
               levelHeight); 
-
-          for (var i = 0; i < node.children.length; i++) {
-            this.renderEdge(node, node.children[i]);
-          }
         };
         Gadget.prototype.renderNode = function(node) {
           this.canvasContext.fillStyle = 'rgb(0, 0, 0)';
@@ -242,6 +239,10 @@
           for (var i = 0; i < node.children.length; i++) {
             this.renderNode(node.children[i]);
           }
+
+          for (var i = 0; i < node.children.length; i++) {
+            this.renderEdge(node, node.children[i]);
+          }
         };
         Gadget.prototype.renderEdge = function(n1, n2) {
           var x1 = n1.view.x + n1.view.width;
@@ -253,12 +254,13 @@
           if (y2 < y1) {
             dcpy *= -1;
           }
-  
+
           this.canvasContext.strokeStyle = 'rgb(0, 0, 0)';
           this.canvasContext.beginPath();
           this.canvasContext.moveTo(x1, y1);
           this.canvasContext.bezierCurveTo(x1 + 10, y1, x2 - 10, y2 + dcpy, x2, y2);
           this.canvasContext.stroke();
+          this.canvasContext.closePath();
         };
         Gadget.prototype.nodeWidth = function(node) {
           return this.canvasContext.measureText(node.text).width;
