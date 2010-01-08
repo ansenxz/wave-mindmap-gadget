@@ -36,6 +36,9 @@
           'add_child': function(gadget, node) {
             return function() { gadget.addChild(node); };
           },
+          'add_sibling': function(gadget, node) {
+            return function() { gadget.addSibling(node); };
+          },
           'remove_node': function(gadget, node) {
             return function() { gadget.removeNode(node); };
           }
@@ -46,6 +49,12 @@
                                    node.view.y + node.view.height / 2,
                                    COMMANDS['add_child'](gadget, node),
                                    'add_child');
+          },
+          'add_sibling': function(gadget, node) {
+            return new NodeControl(node.view.x + node.view.width / 2,
+                                   node.view.y + node.view.height,
+                                   COMMANDS['add_sibling'](gadget, node),
+                                   'add_sibling');
           },
           'remove_node': function(gadget, node) {
             return new NodeControl(node.view.x, node.view.y,
@@ -102,9 +111,10 @@
           this.levelHeight = levelHeight;
         }
         
-        function Node(id, text, opt_children) {
+        function Node(id, text, parentNode, opt_children) {
           this.id = id;
           this.text = text;
+          this.parentNode = parentNode;
           this.children = opt_children ? opt_children : new Array();
           this.view = undefined;
         }
@@ -134,13 +144,13 @@
 
           var serializedRoot = wave.getState().get('root');
           if (serializedRoot) {
-            this.treeRoot = this.deserialize('root', serializedRoot);
+            this.treeRoot = this.deserialize('root', undefined, serializedRoot);
           }
           
           this.render();
         };
         Gadget.prototype.resetTransientState = function() {
-          this.treeRoot = new Node('root', 'default root');
+          this.treeRoot = new Node('root', 'default root', undefined);
           this.controls = new Array();
         };
         Gadget.prototype.findSelectedNode = function(node) {
@@ -177,6 +187,7 @@
           this.controls =
               new Array(
                   CONTROL_BUILDERS['add_child'](this, node),
+                  CONTROL_BUILDERS['add_sibling'](this, node),
                   CONTROL_BUILDERS['remove_node'](this, node)
               );
         };
@@ -197,21 +208,22 @@
           }
           this.submitNodeUpdateDelta(node);
         };
-        Gadget.prototype.deserialize = function(nodeId, stringValue) {
+        Gadget.prototype.deserialize = function(nodeId, parentNode, stringValue) {
           var parts = stringValue.split(';');
           var text = parts[0];
           var childrenIds = parts[1].split(',');
           var children = new Array();
+          var node = new Node(nodeId, text, parentNode, children);
           for (var i = 0; i < childrenIds.length; i++) {
             var childId = childrenIds[i].trim();
             if (childId == null || childId === '') {
               continue;
             }
             var childValue = wave.getState().get(childId);
-            var child = this.deserialize(childId, childValue);
+            var child = this.deserialize(childId, node, childValue);
             children.push(child);
           }
-          return new Node(nodeId, text, children);
+          return node;
         };
         Gadget.prototype.generateNodeId = function() {
           var timestamp = new Date().getTime();
@@ -256,19 +268,46 @@
           }
           this.editNode(node);
         };
-        Gadget.prototype.addChild = function(parent) {
-          var newNode = new Node(this.generateNodeId(), 'new');
-          parent.children.push(newNode);
-          this.serialize(parent);
+        Gadget.prototype.addChild = function(parentNode) {
+          var newNode = new Node(this.generateNodeId(), 'new', parentNode);
+          parentNode.children.push(newNode);
+          this.serialize(parentNode);
+        };
+        Gadget.prototype.addSibling = function(node) {
+          this.addChild(node.parentNode);
         };
         Gadget.prototype.removeNode = function(node) {
           if (node === this.treeRoot) {
-            log('attempted to remove root, duh');
             return;
           }
 
-          this.selectedNodeId = undefined;
-          log('TODO: actually remove node ' + node.id);
+          // Remove children.
+          for (var i = 0; i < node.children.length; i++) {
+            this.removeNode(node.children[i]);
+          }
+
+          // Update parent node's list of children.
+          var parentNode = node.parentNode;
+          var updatedChildren = new Array();
+          for (var i = 0; i < parentNode.children.length; i++) {
+            var child = parentNode.children[i];
+            if (child.id != node.id) {
+              updatedChildren.push(child);
+            }
+          }
+          parentNode.children = updatedChildren;
+          var delta = {};
+          delta[node.id] = null;
+          delta[parentNode.id] = parentNode.serialize();
+          wave.getState().submitDelta(delta);
+
+          // TODO: I'm pretty sure that submitting deltas for the same node (while updating node B
+          // as a child of A and parent of C when A gets removed, for instance) is causing ghost
+          // nodes to linger in the state. Need to move to a non-recursive model or at least pass
+          // the delta map down so that a single delta gets submitted for operations affecting
+          // multiple nodes.
+
+          this.selectedNodeId = parentNode.id;
         };
         Gadget.prototype.selectNode = function(node) {
           this.selectedNodeId = node.id;
@@ -348,7 +387,7 @@
           // Actually render controls.
           for (var i = 0; i < this.controls.length; i++) {
             var control = this.controls[i];
-            if (control.name == 'add_child') {
+            if (control.name == 'add_child' || control.name == 'add_sibling') {
               this.renderAddChildControl(control);
             } else if (control.name == 'remove_node') {
               this.renderRemoveNodeControl(control);
@@ -476,9 +515,6 @@
 
         Gadget.prototype.debugResetState = function() {
           wave.getState().reset();
-          var debugRoot = new Node('root', 'debug root', new Array(
-              new Node(this.generateNodeId(), 'first child')));
-          this.serialize(debugRoot);
           this.controls = new Array();
         };
         Gadget.prototype.debugPrintState = function() {
