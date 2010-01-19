@@ -7,7 +7,9 @@
     <![CDATA[
       <div id="contents">
         <input type="text" style="display: none; position: absolute" id="nodeInput" />
-        <canvas id="canvas" width="500" height="150"></canvas>
+        <div id="scrollingContainer" style="width: 100%; overflow-x: scroll">
+          <canvas id="canvas" width="1000" height="150"></canvas>
+        </div>
       </div>
       <input type="button" value="reset state" id="debugReset" />
       <input type="button" value="clear console" id="clearConsole" />
@@ -21,9 +23,9 @@
           LEVEL_HORIZ_SPACING: 50,
           LEVEL_VERT_SPACING: 5,
           NODE_CONTROL_RADIUS: 5,
-          NODE_HEIGHT: 20,
+          NODE_HEIGHT: 24,
           NODE_HIGHLIGHT_OFFSET: 2,
-          NODE_PADDING: 5,
+          NODE_PADDING: 7,
           NODE_WIDTH: 50,
           ORIGIN_DELTA_X: 20,
           ORIGIN_DELTA_Y: 20,
@@ -239,17 +241,23 @@
           this.nodeInput.addEventListener('keyup', bind(this.nodeInputKeyUp, this), false);
         };
         Gadget.prototype.canvasClicked = function(event) {
+          // firefox: log('layerX: ' + event.layerX + 'layerY: ' + event.layerY);
+          // opera: log('offsetX: ' + event.offsetX + 'offsetY: ' + event.offsetY);
+          // ?: log('offsetLeft: ' + event.offsetLeft + 'offsetTop: ' + event.offsetTop);
+          var horizontalScrollOffset = document.getElementById('scrollingContainer').scrollLeft;
+          var x = event.layerX + horizontalScrollOffset;
+          var y = event.layerY;
           // First check if a control was clicked, and if so apply it.
           for (var i = 0; i < this.controls.length; i++) {
             var control= this.controls[i];
-            if (control.isInside(event.layerX, event.layerY)) {
+            if (control.isInside(x, y)) {
               control.command();
               return;
             }
           }
 
           // Check if a node was clicked to select it.
-          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
+          var node = this.findNode(this.treeRoot, x, y);
           if (!node) {
             this.cancelEdition();
             return;
@@ -258,10 +266,10 @@
           this.render();
         };
         Gadget.prototype.canvasDoubleClicked = function(event) {
-          // firefox: log('layerX: ' + event.layerX + 'layerY: ' + event.layerY);
-          // opera: log('offsetX: ' + event.offsetX + 'offsetY: ' + event.offsetY);
-          // ?: log('offsetLeft: ' + event.offsetLeft + 'offsetTop: ' + event.offsetTop);
-          var node = this.findNode(this.treeRoot, event.layerX, event.layerY);
+          var horizontalScrollOffset = document.getElementById('scrollingContainer').scrollLeft;
+          var x = event.layerX + horizontalScrollOffset;
+          var y = event.layerY;
+          var node = this.findNode(this.treeRoot, x, y);
           if (!node) {
             this.cancelEdition();
             return;
@@ -322,8 +330,9 @@
   
           // Styling and positioning
           this.nodeInput.type = 'text';
-          this.nodeInput.style.left = node.view.x + 'px';
-          this.nodeInput  .style.top = node.view.y + 'px';
+          var horizontalScrollOffset = document.getElementById('scrollingContainer').scrollLeft;
+          this.nodeInput.style.left = (node.view.x - horizontalScrollOffset) + 'px';
+          this.nodeInput.style.top = node.view.y + 'px';
           this.nodeInput.style.display = 'block';
           this.nodeInput.size = node.text.length;
           this.nodeInput.value = node.text;
@@ -440,9 +449,22 @@
 
           var canvasHeight = this.treeRoot.view.levelHeight;
           this.canvas.height = canvasHeight;
+          var canvasWidth = this.findCanvasWidth(this.treeRoot);
+          this.canvas.width = canvasWidth;
 
           // Viewport border
-          this.canvasContext.strokeRect(0, 0, 500, canvasHeight);
+          this.canvasContext.strokeRect(0, 0, canvasWidth, canvasHeight);
+        };
+        Gadget.prototype.findCanvasWidth = function(node) {
+          var nodeRight = node.view.width + node.view.x;
+          var furthestRightLimit = nodeRight;
+          for (var i = 0; i < node.children.length; i++) {
+            var childRight = this.findCanvasWidth(node.children[i]);
+            if (childRight > furthestRightLimit) {
+              furthestRightLimit = childRight;
+            }
+          }
+          return furthestRightLimit;
         };
         Gadget.prototype.buildView = function(node, levelLeft, levelTop) {
           var width = this.nodeWidth(node) + 2 * DRAW_CONSTS.NODE_PADDING;
