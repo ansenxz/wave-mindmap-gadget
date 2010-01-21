@@ -5,16 +5,40 @@
   </ModulePrefs>
   <Content type="html">
     <![CDATA[
+      <style type="text/css">
+        #contents {
+          font-family: arial, sans-serif;
+          font-size: 12px;
+        }
+        .link-like {
+          color: #003EA8;
+          cursor: pointer;
+          text-decoration: underline;
+        }
+        #nodeInput {
+          display: none;
+          position: absolute;
+        }
+        #scrollingContainer {
+          with: 100%;
+          overflow-x: scroll;
+        }
+        #debug {
+          display: none;
+        }
+      </style>
       <div id="contents">
-        <input type="text" style="display: none; position: absolute" id="nodeInput" />
-        <div id="scrollingContainer" style="width: 100%; overflow-x: scroll">
+        <input type="text" id="nodeInput" />
+        <div id="scrollingContainer">
           <canvas id="canvas" width="1000" height="150"></canvas>
         </div>
+        <div class="link-like" onclick="toggleDebugVisibility()">toggle debug output</div>
+        <div id="debug">
+          <input type="button" value="reset state" id="debugReset" />
+          <input type="button" value="clear console" id="clearConsole" />
+          <div id="console"></div>
+        </div>
       </div>
-      <input type="button" value="reset state" id="debugReset" />
-      <input type="button" value="clear console" id="clearConsole" />
-      <div id="console"></div>
-      <div>version: 0.1</div>
       <script type="text/javascript">
         // ---------------------------------------------------------------------
         // Global definitions and helpers
@@ -569,6 +593,11 @@
           var logEntry = document.createElement('div');
           logEntry.innerHTML = message;
           console.appendChild(logEntry);
+        }
+        function toggleDebugVisibility() {
+          var debugConsole = document.getElementById('debug');
+          var visibility = debugConsole.style.display;
+          debugConsole.style.display = (visibility == 'none') ? 'block' : 'none';
         }
         
         gadgets.util.registerOnLoadHandler(init);
