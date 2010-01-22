@@ -88,6 +88,10 @@
                                    'remove_node');
           }
         };
+        STATE_VALUE_KEYS = {
+          TREE_ROOT: 'root',
+          SELECTED_NODE_PREFIX: 'selected_'
+        };
         
         // TODO: actually depend on closure instead of copying code here
         function bind(fn, selfObj, var_args) {
@@ -168,16 +172,22 @@
           this.debugPrintState();
           this.resetTransientState();
 
-          var serializedRoot = wave.getState().get('root');
+          var serializedRoot = wave.getState().get(STATE_VALUE_KEYS.TREE_ROOT);
           if (serializedRoot) {
-            this.treeRoot = this.deserialize('root', undefined, serializedRoot);
+            this.treeRoot = this.deserialize(STATE_VALUE_KEYS.TREE_ROOT, undefined, serializedRoot);
+          }
+          var viewerSelectedNode =
+              wave.getState().get(this.generateNodeSelectionKey(wave.getViewer()));
+          if (viewerSelectedNode) {
+            this.selectedNodeId = viewerSelectedNode;
           }
           
           this.render();
         };
         Gadget.prototype.resetTransientState = function() {
-          this.treeRoot = new Node('root', 'default root', undefined);
+          this.treeRoot = new Node(STATE_VALUE_KEYS.TREE_ROOT, 'default root', undefined);
           this.controls = new Array();
+          this.selectedNodeId = undefined;
         };
         Gadget.prototype.findSelectedNode = function(node) {
           if (this.selectedNodeId == node.id) {
@@ -256,6 +266,9 @@
           var participantId = wave.getViewer().getId();
           return participantId + '_' + timestamp;
         };
+        Gadget.prototype.generateNodeSelectionKey = function(participant) {
+          return STATE_VALUE_KEYS.SELECTED_NODE_PREFIX + participant.getId();
+        };
 
         // User actions
 
@@ -287,7 +300,6 @@
             return;
           }
           this.selectNode(node);
-          this.render();
         };
         Gadget.prototype.canvasDoubleClicked = function(event) {
           var horizontalScrollOffset = document.getElementById('scrollingContainer').scrollLeft;
@@ -339,11 +351,12 @@
           // the delta map down so that a single delta gets submitted for operations affecting
           // multiple nodes.
 
-          this.selectedNodeId = parentNode.id;
+          this.selectNode(parentNode);
         };
         Gadget.prototype.selectNode = function(node) {
-          this.selectedNodeId = node.id;
-          this.buildControls(node);
+          var viewer = wave.getViewer();
+          var selectionKey = this.generateNodeSelectionKey(viewer);
+          wave.getState().submitValue(selectionKey, node.id);
         };
         Gadget.prototype.cancelEdition = function() {
           this.nodeInput.style.display = 'none';
