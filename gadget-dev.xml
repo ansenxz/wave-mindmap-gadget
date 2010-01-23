@@ -44,8 +44,11 @@
         // Global definitions and helpers
         // ---------------------------------------------------------------------
         DRAW_CONSTS = {
+          CANVAS_PADDING: 5,
           LEVEL_HORIZ_SPACING: 50,
           LEVEL_VERT_SPACING: 5,
+          MIN_CANVAS_HEIGHT: 300,
+          MIN_CANVAS_WIDTH: 400,
           NODE_CONTROL_RADIUS: 5,
           NODE_HEIGHT: 24,
           NODE_HIGHLIGHT_OFFSET: 2,
@@ -397,7 +400,7 @@
           gadgets.window.adjustHeight();  
         };
         Gadget.prototype.renderTree = function() {
-          this.buildView(this.treeRoot, 0, 0);
+          this.buildView(this.treeRoot, DRAW_CONSTS.CANVAS_PADDING, DRAW_CONSTS.CANVAS_PADDING);
 
           // Adjust canvas to fit current view.
           this.adjustCanvas();
@@ -484,9 +487,11 @@
           this.clearCanvas();
           this.canvasContext.fillStyle = this.canvasContext.strokeStyle = 'rgb(0, 0, 0)';
 
-          var canvasHeight = this.treeRoot.view.levelHeight;
+          var canvasHeight = DRAW_CONSTS.CANVAS_PADDING
+              + Math.max(DRAW_CONSTS.MIN_CANVAS_HEIGHT, this.treeRoot.view.levelHeight);
           this.canvas.height = canvasHeight;
-          var canvasWidth = this.findCanvasWidth(this.treeRoot);
+          var canvasWidth = DRAW_CONSTS.CANVAS_PADDING
+              + Math.max(DRAW_CONSTS.MIN_CANVAS_WIDTH, this.findCanvasWidth(this.treeRoot));
           this.canvas.width = canvasWidth;
 
           // Viewport border
