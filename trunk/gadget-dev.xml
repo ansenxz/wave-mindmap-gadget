@@ -45,6 +45,8 @@
         // ---------------------------------------------------------------------
         DRAW_CONSTS = {
           CANVAS_PADDING: 5,
+          EDGE_CURVE: 10,
+          EDGE_HORIZ_OFFSET: 20,
           LEVEL_HORIZ_SPACING: 50,
           LEVEL_VERT_SPACING: 20,
           MIN_CANVAS_HEIGHT: 300,
@@ -595,7 +597,7 @@
           var x2 = n2.view.x;
           var y2 = n2.view.y + n2.view.height / 2;
   
-          var dcpy = 5;
+          var dcpy = Math.min(DRAW_CONSTS.EDGE_CURVE, Math.abs(y1 - y2));
           if (y2 < y1) {
             dcpy *= -1;
           }
@@ -603,7 +605,13 @@
           this.canvasContext.strokeStyle = 'rgb(0, 0, 0)';
           this.canvasContext.beginPath();
           this.canvasContext.moveTo(x1, y1);
-          this.canvasContext.bezierCurveTo(x1 + 10, y1, x2 - 10, y2 + dcpy, x2, y2);
+          this.canvasContext.bezierCurveTo(
+              x1 + DRAW_CONSTS.EDGE_HORIZ_OFFSET,
+              y1,
+              x2 - DRAW_CONSTS.EDGE_HORIZ_OFFSET,
+              y2 + dcpy,
+              x2,
+              y2);
           this.canvasContext.stroke();
           this.canvasContext.closePath();
         };
