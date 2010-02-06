@@ -46,7 +46,7 @@
         DRAW_CONSTS = {
           CANVAS_PADDING: 5,
           LEVEL_HORIZ_SPACING: 50,
-          LEVEL_VERT_SPACING: 5,
+          LEVEL_VERT_SPACING: 20,
           MIN_CANVAS_HEIGHT: 300,
           MIN_CANVAS_WIDTH: 400,
           NODE_CONTROL_RADIUS: 5,
@@ -95,6 +95,12 @@
           TREE_ROOT: 'root',
           SELECTED_NODE_PREFIX: 'selected_'
         };
+        SELECTION_HIGHLIGHT_STYLES = [
+          'rgb(255, 140, 0)',
+          'rgb(255, 0, 0)',
+          'rgb(0, 255, 0)',
+          'rgb(0, 0, 255)'
+        ];
         
         // TODO: actually depend on closure instead of copying code here
         function bind(fn, selfObj, var_args) {
@@ -166,7 +172,6 @@
           this.canvas = document.getElementById('canvas');
           this.canvasContext = canvas.getContext('2d');
           this.nodeInput = document.getElementById('nodeInput');
-          this.selectedNodeId = undefined;
         }
 
         // App lifecycle.
@@ -179,10 +184,18 @@
           if (serializedRoot) {
             this.treeRoot = this.deserialize(STATE_VALUE_KEYS.TREE_ROOT, undefined, serializedRoot);
           }
-          var viewerSelectedNode =
-              wave.getState().get(this.generateNodeSelectionKey(wave.getViewer()));
-          if (viewerSelectedNode) {
-            this.selectedNodeId = viewerSelectedNode;
+          var participants = wave.getParticipants();
+          this.selectedNodes = {};
+          this.selectionColors = {};
+          for (var i = 0; i < participants.length; i++) {
+            var participant = participants[i];
+            var selectionKey = this.generateNodeSelectionKey(participant);
+            var selectedNodeId = wave.getState().get(selectionKey);
+            if (!!selectedNodeId) {
+              this.selectedNodes[selectedNodeId] = participant;
+            }
+            this.selectionColors[participant.getId()] =
+                SELECTION_HIGHLIGHT_STYLES[i % SELECTION_HIGHLIGHT_STYLES.length];
           }
           
           this.render();
@@ -190,15 +203,15 @@
         Gadget.prototype.resetTransientState = function() {
           this.treeRoot = new Node(STATE_VALUE_KEYS.TREE_ROOT, 'default root', undefined);
           this.controls = new Array();
-          this.selectedNodeId = undefined;
+          this.selectedNodes = {};
         };
-        Gadget.prototype.findSelectedNode = function(node) {
-          if (this.selectedNodeId == node.id) {
+        Gadget.prototype.findNodeWithId = function(node, id) {
+          if (id == node.id) {
             return node;
           }
 
           for (var i = 0; i < node.children.length; i++) {
-            var child = this.findSelectedNode(node.children[i]);
+            var child = this.findNodeWithId(node.children[i], id);
             if (!!child) {
               return child;
             }
@@ -254,7 +267,7 @@
           var children = new Array();
           var node = new Node(nodeId, text, parentNode, children);
           for (var i = 0; i < childrenIds.length; i++) {
-            var childId = childrenIds[i].trim();
+            var childId = childrenIds[i];
             if (childId == null || childId === '') {
               continue;
             }
@@ -409,30 +422,24 @@
           this.renderNode(this.treeRoot);
         };
         Gadget.prototype.renderControls = function() {
-          if (!this.selectedNodeId) {
+          this.renderParticipantSelections(this.treeRoot);
+
+          // Render controls for node selected by viewer.
+          var selectionKey = this.generateNodeSelectionKey(wave.getViewer());
+          var selectedNodeId = wave.getState().get(selectionKey);
+          if (!selectedNodeId) {
             return;
           }
 
-          var selectedNode = this.findSelectedNode(this.treeRoot);
+          var selectedNode = this.findNodeWithId(this.treeRoot, selectedNodeId);
           if (!selectedNode) {
             // TODO: someone deleted a node this viewer had selected, need to handle that
-            this.selectedNodeId = undefined;
             return;
           }
 
           // Adjust control positioning according to current state.
           this.buildControls(selectedNode);
 
-          // Highlight selected node.
-          this.canvasContext.save();
-          this.canvasContext.strokeStyle = 'rgb(255, 140, 0)';
-          this.canvasContext.strokeRect(
-              selectedNode.view.x - DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET,
-              selectedNode.view.y - DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET,
-              selectedNode.view.width + 2 * DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET,
-              selectedNode.view.height + 2 * DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET);
-          this.canvasContext.restore();
-          
           // Actually render controls.
           for (var i = 0; i < this.controls.length; i++) {
             var control = this.controls[i];
@@ -442,6 +449,39 @@
               this.renderRemoveNodeControl(control);
             }
           }
+        };
+        Gadget.prototype.highlightSelectedNode = function(node, strokeStyle, name) {
+          var x = node.view.x - DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET;
+          var y = node.view.y - DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET;
+          var width = node.view.width + 2 * DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET;
+          var height = node.view.height + 2 * DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET;
+          this.canvasContext.save();
+          this.canvasContext.strokeStyle = strokeStyle;
+          this.canvasContext.strokeRect(x, y, width, height);
+
+          // Printing participant name
+          // TODO: print all participants outside of the canvas
+          var nameX = x + width / 2 + DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET;
+          var nameY = y + height + 2 * DRAW_CONSTS.NODE_HIGHLIGHT_OFFSET;
+          var participantNameWidth = this.canvasContext.measureText(name).width;
+          this.canvasContext.fillStyle = strokeStyle;
+          this.canvasContext.fillRect(nameX - 2, nameY - 2, participantNameWidth + 5, 14);
+          this.canvasContext.fillStyle = 'rgb(255, 255, 255)';
+          this.canvasContext.textBaseline = 'top';
+          this.canvasContext.fillText(name, nameX, nameY);
+          this.canvasContext.restore();
+        };
+        Gadget.prototype.renderParticipantSelections = function(node) {
+          for (var i = 0; i < node.children.length; i++) {
+            this.renderParticipantSelections(node.children[i]);
+          }
+          var participant = this.selectedNodes[node.id];
+          if (!participant) {
+            // This particular node is not selected.
+            return;
+          }
+          this.highlightSelectedNode(node, this.selectionColors[participant.getId()],
+              participant.getDisplayName());
         };
         Gadget.prototype.renderAddChildControl = function(control) {
           this.canvasContext.save();
