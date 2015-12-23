@@ -1,0 +1,1 @@
+A mindmapping gadget for Google Wave
